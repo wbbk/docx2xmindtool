@@ -2,6 +2,10 @@
 
 基于大模型的 docx 文档转 xmind 思维导图工具，实现文档结构智能解析与思维导图生成。
 
+![iShot_2025-03-19_22.55.27](/Users/wubin/Desktop/hanweb/SynologyDrive/code/python/docx2xmindtool/iShot_2025-03-19_22.55.27.png)
+
+![iShot_2025-03-19_22.55.49](/Users/wubin/Desktop/hanweb/SynologyDrive/code/python/docx2xmindtool/iShot_2025-03-19_22.55.49.png)
+
 ## 项目结构
 
 ```
@@ -98,8 +102,6 @@ npm run build
 - [ ] xmind在线编辑
 - [ ] 文档下载
 - [ ] 失败重试
-
-
 
 
 
