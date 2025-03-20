@@ -13,20 +13,53 @@ import os
 import sys
 from pathlib import Path
 from openai import OpenAI
+from flask import current_app
+from models import db, APIConfig, UserFile
 
-client_ali = OpenAI(
-    # 若没有配置环境变量，请用百炼API Key将下行替换为：api_key="sk-xxx",key的获取地址如下
-    # https://bailian.console.aliyun.com/?spm=5176.29619931.J__Z58Z6CX7MY__Ll8p1ZOR.1.540959fcDn6UTO#/model-market/detail/qwen2.5-72b-instruct?tabKey=sdk
-    api_key="sk-624a75f0a67d4a5f80d26032fc2c7c01",
-    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-)
+# 定义项目根目录和上传目录的路径
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+UPLOADS_DIR = os.path.join('backend', 'static', 'uploads')
 
-# 读取该项目根目录下的文件路径
-path = os.path.dirname(sys.argv[0])
-def first_ali_file_agent_handle(filename):
-    file_path = os.path.join(path, filename)
-    file_object = client_ali.files.create(file=Path(file_path), purpose="file-extract")
-    file_completion = client_ali.chat.completions.create(
+def get_file_model_config(user_id):
+    """获取用户配置的文件处理模型配置"""
+    with current_app.app_context():
+        config = APIConfig.query.filter_by(
+            user_id=user_id,
+            type='file'
+        ).first()
+        if not config:
+            raise Exception("未找到文件处理模型配置，请先配置模型信息")
+        return config
+
+def create_model_client(user_id):
+    """创建模型客户端"""
+    config = get_file_model_config(user_id)
+    return OpenAI(
+        api_key=config.api_key,
+        base_url=config.api_url
+    )
+
+def get_latest_user_file(user_id):
+    """获取用户最新上传的文件信息"""
+    with current_app.app_context():
+        latest_file = UserFile.query.filter_by(user_id=user_id).order_by(UserFile.upload_time.desc()).first()
+        if not latest_file:
+            raise Exception("未找到用户上传的文件")
+        # 将文件路径转换为相对于项目根目录的路径
+        relative_path = os.path.join(UPLOADS_DIR, os.path.basename(latest_file.file_path))
+        latest_file.file_path = os.path.join(BASE_DIR, relative_path)
+        return latest_file
+
+def first_ali_file_agent_handle(user_id):
+    # 获取用户最新上传的文件信息
+    with current_app.app_context():
+        user_file = UserFile.query.filter_by(user_id=user_id).order_by(UserFile.upload_time.desc()).first()
+        if not user_file:
+            raise Exception("未找到用户上传的文件")
+    file_path = user_file.file_path
+    client = create_model_client(user_id)
+    file_object = client.files.create(file=Path(file_path), purpose="file-extract")
+    file_completion = client.chat.completions.create(
         model="qwen-long",
         messages=[
             {'role': 'system', 'content': f'fileid://{file_object.id}'},

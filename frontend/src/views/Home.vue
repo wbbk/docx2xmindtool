@@ -14,7 +14,7 @@
           模型编辑
         </el-button>
         <div class="preview-buttons"> 
-              <el-button type="primary" class="edit-button">读取文档</el-button>
+              <el-button type="primary" class="edit-button" @click="handleReadDocument">读取文档</el-button>
         </div>
         </div>
         <!-- 文件上传区域 -->
@@ -26,6 +26,7 @@
           :before-upload="beforeUpload"
           :on-exceed="handleExceed"
           :on-error="handleUploadError"
+          :on-success="handleUploadSuccess"
           accept=".docx"
           :limit="1"
         >
@@ -84,7 +85,12 @@
       <el-main>
         <!-- 日志展示区域 -->
         <div class="log-area">
-          <h3>转换日志</h3>
+        <div class="preview-container">
+          <h3>日志</h3>
+          <div class="preview-buttons"> 
+            <el-button type="primary" class="edit-button" @click="handleClearLogs">日志清空</el-button>
+          </div>
+          </div>
           <el-scrollbar height="200px">
             <div v-if="logs.length === 0" class="empty-state">暂无日志记录</div>
             <div v-else v-for="(log, index) in logs" :key="index" class="log-item">
@@ -97,9 +103,9 @@
         <!-- XMind预览区域 -->
         <div class="preview-area">
           <div class="preview-container">
-            <h3>预览</h3>
+            <h3>XMind预览</h3>
             <div class="preview-buttons"> 
-              <el-button type="primary" @click="showDemoDialog" class="edit-button">Xmind预览</el-button>
+              <el-button type="primary" @click="showDemoDialog" class="edit-button">预览</el-button>
             </div>
           </div>
           
@@ -222,12 +228,11 @@
 </template>
 
 <script>
-import { ref, onMounted, onUnmounted,computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { UploadFilled } from '@element-plus/icons-vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
 import axios from 'axios'
-import { Delete, Edit } from '@element-plus/icons-vue'
+import { Delete, Edit, UploadFilled } from '@element-plus/icons-vue'
 import mindmap from 'vue3-mindmap'
 import 'vue3-mindmap/dist/style.css'
 export default {
@@ -481,8 +486,10 @@ export default {
 
     // 文件上传相关
     const beforeUpload = (file) => {
+      addLog(`文件: ${file.name} 上传成功`, 'info')
       const isDocx = file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
       if (!isDocx) {
+        addLog(`文件类型错误: ${file.name} 不是docx文件`, 'error')
         ElMessage({
           message: '只能上传 docx 文件!',
           type: 'error',
@@ -494,6 +501,7 @@ export default {
       
       const isLt10M = file.size / 1024 / 1024 < 10
       if (!isLt10M) {
+        addLog(`文件大小超过限制: ${file.name} 大于10MB`, 'error')
         ElMessage({
           message: '文件大小不能超过 10MB!',
           type: 'error',
@@ -517,9 +525,10 @@ export default {
 
     const handleUploadSuccess = (response) => {
       if (response.success) {
-        currentFile.value = response.original_filename
-        addLog(`${response.original_filename} 文件上传成功，已加入转换队列`, 'success')
+        currentFile.value = response.filename
+        addLog(`${response.filename} 文件上传成功，已加入转换队列`, 'success')
       } else {
+        addLog(`文件上传失败: ${response.message}`, 'error')
         ElMessage.error(response.message)
       }
     }
@@ -531,6 +540,7 @@ export default {
       } else if (error.message) {
         message = `${message}: ${error.message}`;
       }
+      addLog(message, 'error')
       ElMessage({
         message: message,
         type: 'error',
@@ -551,16 +561,37 @@ export default {
     // 运行测试
     const runTests = async () => {
       try {
+        addLog('开始执行测试规范检查...', 'info')
+        const enabledRules = testRules.value.filter(rule => rule.enabled)
+        if (enabledRules.length === 0) {
+          addLog('未选择任何测试规范', 'warning')
+          ElMessage.warning('请至少选择一个测试规范')
+          return false
+        }
+
         const response = await axios.post('/api/readdocxfile', {
-          test_rules: testRules.value.filter(rule => rule.enabled)
+          test_rules: enabledRules
         })
+
         const results = response.data.results
+        let successCount = 0
+        let failCount = 0
+
         results.forEach(result => {
+          if (result.success) {
+            successCount++
+          } else {
+            failCount++
+          }
           addLog(`${result.rule}: ${result.message}`, result.success ? 'success' : 'error')
         })
+
+        addLog(`测试完成: ${successCount}个通过, ${failCount}个失败`, successCount === results.length ? 'success' : 'warning')
         return response.data.success
       } catch (error) {
-        ElMessage.error('测试执行失败')
+        const errorMsg = error.response?.data?.message || '测试执行失败'
+        addLog(errorMsg, 'error')
+        ElMessage.error(errorMsg)
         return false
       }
     }
@@ -568,20 +599,34 @@ export default {
     // 转换文件
     const convertFile = async () => {
       try {
+        if (!currentFile.value) {
+          addLog('请先上传文件', 'warning')
+          ElMessage.warning('请先上传文件')
+          return
+        }
+
+        addLog('开始转换文件...', 'info')
         const response = await axios.post('/api/convert', {
           filename: currentFile.value,
           test_results: testResults.value
         })
+
         if (response.data.success) {
           outputFile.value = response.data.output_filename
-          addLog('success', '文件转换成功')
-          loadPreview(outputFile.value)
+          addLog(`文件转换成功：${response.data.output_filename}`, 'success')
+          await loadPreview(outputFile.value)
           canDownload.value = true
+          ElMessage.success('文件转换成功')
         } else {
-          addLog('error', response.data.message)
+          const errorMsg = response.data.message || '转换失败'
+          addLog(errorMsg, 'error')
+          ElMessage.error(errorMsg)
+          showRetry.value = true
         }
       } catch (error) {
-        addLog('error', '文件转换失败')
+        const errorMsg = error.response?.data?.message || '文件转换失败'
+        addLog(errorMsg, 'error')
+        ElMessage.error(errorMsg)
         showRetry.value = true
       }
     }
@@ -589,12 +634,11 @@ export default {
     // 预览相关
     const loadPreview = async (filename) => {
       try {
+        addLog(`正在加载预览: ${filename}`, 'info')
         const response = await fetch(`/api/preview/${filename}`)
         const data = await response.json()
         if (data.success && data.preview_data) {
-          // 使用API返回的数据结构
           if (data.preview_data.nodes && data.preview_data.nodes.length > 0) {
-            // 将nodes[0]转换为vue3-mindmap组件需要的格式
             const convertNode = (node) => {
               return {
                 name: node.text || '',
@@ -604,16 +648,22 @@ export default {
             
             const rootNode = data.preview_data.nodes[0];
             previewData.value = [convertNode(rootNode)];
+            addLog('预览数据加载成功', 'success')
             console.log('预览数据:', previewData.value)
           } else {
-            ElMessage.warning('预览数据格式不正确')
+            addLog('预览数据格式不正确：缺少节点数据', 'error')
+            ElMessage.warning('预览数据格式不正确：缺少节点数据')
           }
         } else {
-          ElMessage.warning('预览数据格式不正确')
+          const errorMsg = data.message || '预览数据格式不正确'
+          addLog(errorMsg, 'error')
+          ElMessage.warning(errorMsg)
         }
       } catch (error) {
+        const errorMsg = `预览加载失败: ${error.message || '未知错误'}`
+        addLog(errorMsg, 'error')
         console.error('预览加载错误:', error)
-        ElMessage.error('加载预览失败')
+        ElMessage.error(errorMsg)
       }
     }
 
@@ -667,9 +717,14 @@ export default {
         content: logContent,
         type
       })
-      
       // 在控制台也输出日志，方便调试
       console.log(`[${type.toUpperCase()}] ${logContent}`)
+    }
+    // 日志清空方法
+    const handleClearLogs = () => {
+      logs.value = []
+      previewData.value = null
+      // addLog('日志已清空', 'info')
     }
 
     // 生命周期钩子
@@ -677,13 +732,57 @@ export default {
       loadConfigs()
     })
 
+    // 添加handleReadDocument方法
+    const handleReadDocument = async () => {
+      if (!currentFile.value) {
+        ElMessage.warning('请先上传文件')
+        return
+      }
+      const loading = ElLoading.service({
+        lock: true,
+        text: '文档读取处理中...',
+        background: 'rgba(0, 0, 0, 0.7)'
+      })
+      try {
+        addLog('开始读取文档...', 'info')
+        const response = await axios.post('/api/readdocxfile', {})
+        if (response.data.success) {
+          addLog('文档读取成功', 'success')
+          ElMessage.success('文档读取成功')
+        } else {
+          const errorMsg = response.data.message || '读取失败'
+          addLog(errorMsg, 'error')
+          ElMessage.error(errorMsg)
+        }
+      } catch (error) {
+        const errorMsg = error.response?.data?.message || '读取文档失败'
+        addLog(errorMsg, 'error')
+        ElMessage.error(errorMsg)
+      } finally {
+        loading.close()
+      }
+    }
+
     // 添加handleStartConversion方法
     const handleStartConversion = async () => {
       if (!currentFile.value) {
         ElMessage.warning('请先上传文件')
         return
       }
-      await convertFile()
+      try {
+        addLog('开始执行测试规范检查...', 'info')
+        const testSuccess = await runTests()
+        if (!testSuccess) {
+          addLog('测试规范检查未通过，请修正后重试', 'error')
+          ElMessage.error('测试规范检查未通过，请修正后重试')
+          return
+        }
+        await convertFile()
+      } catch (error) {
+        const errorMsg = error.response?.data?.message || '转换失败'
+        addLog(errorMsg, 'error')
+        ElMessage.error(errorMsg)
+      }
     }
 
     // 添加上传请求头
@@ -763,7 +862,9 @@ export default {
       deleteRule,
       saveTestRule,
       UploadFilled,
-      uploadHeaders
+      uploadHeaders,
+      handleClearLogs,
+      handleReadDocument
     }
   }
 }

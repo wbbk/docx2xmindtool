@@ -11,6 +11,7 @@ from api.model_api import call_model_api
 from models import db, APIConfig
 import xmindparser
 import time
+from readfocxfile import first_ali_file_agent_handle
 
 app = Flask(__name__, static_folder='static')
 CORS(app)
@@ -121,14 +122,28 @@ def manage_configs(current_user):
                         "success": False
                     }), 400
                 
-                new_config = APIConfig(
-                    api_key=config['api_key'].strip(),
-                    api_url=config['api_url'].strip(),
-                    model=config['model'].strip(),
-                    type=config.get('type', 'normal').strip(),
-                    user_id=current_user.id
-                )
-                db.session.add(new_config)
+                # 检查是否已存在相同type的配置
+                config_type = config.get('type', 'normal').strip()
+                existing_config = APIConfig.query.filter_by(
+                    user_id=current_user.id,
+                    type=config_type
+                ).first()
+                
+                if existing_config:
+                    # 更新已存在的配置
+                    existing_config.api_key = config['api_key'].strip()
+                    existing_config.api_url = config['api_url'].strip()
+                    existing_config.model = config['model'].strip()
+                else:
+                    # 创建新配置
+                    new_config = APIConfig(
+                        api_key=config['api_key'].strip(),
+                        api_url=config['api_url'].strip(),
+                        model=config['model'].strip(),
+                        type=config_type,
+                        user_id=current_user.id
+                    )
+                    db.session.add(new_config)
             
             db.session.commit()
             return jsonify({"message": "配置已保存", "success": True})
@@ -196,14 +211,24 @@ def upload_file(current_user):
                 with open(file_path, 'rb') as f:
                     saved_content = f.read()
                 if len(saved_content) == len(file_content) and saved_content == file_content:
-                    # 保存文件信息到数据库
-                    user_file = UserFile(
-                        user_id=current_user.id,
-                        original_filename=original_filename,
-                        file_path=file_path,
-                        file_size=len(file_content)
-                    )
-                    db.session.add(user_file)
+                    # 查找用户是否已有文件记录
+                    existing_file = UserFile.query.filter_by(user_id=current_user.id).first()
+                    
+                    if existing_file:
+                        existing_file.original_filename = original_filename
+                        existing_file.file_path = file_path
+                        existing_file.file_size = len(file_content)
+                        existing_file.upload_time = db.func.current_timestamp()
+                    else:
+                        # 如果不存在则创建新记录
+                        existing_file = UserFile(
+                            user_id=current_user.id,
+                            original_filename=original_filename,
+                            file_path=file_path,
+                            file_size=len(file_content)
+                        )
+                        db.session.add(existing_file)
+                    
                     db.session.commit()
                     
                     return jsonify({
@@ -225,35 +250,21 @@ def upload_file(current_user):
 @app.route('/api/readdocxfile', methods=['POST'])
 @token_required
 def read_docx_file(current_user):
-    test_rules = request.json.get('test_rules', [])
-    results = []
-    
-    for rule in test_rules:
-        if rule['enabled']:
-            # 这里应该实现各种测试规则的逻辑
-            # 示例实现
-            if rule['name'] == '大模型连接测试':
-                # 测试与大模型的连接
-                success, message = test_model_connection()
-                results.append({
-                    "rule": rule['name'],
-                    "success": success,
-                    "message": message
-                })
-            elif rule['name'] == '文件解析组件依赖检测':
-                # 测试文件解析组件
-                success, message = test_docx_parser()
-                results.append({
-                    "rule": rule['name'],
-                    "success": success,
-                    "message": message
-                })
-            # 添加更多测试规则...
-    
-    return jsonify({
-        "results": results,
-        "success": all(result['success'] for result in results)
-    })
+    try:
+        # 调用文件处理函数
+        result = first_ali_file_agent_handle(current_user.id)
+        
+        return jsonify({
+            "success": True,
+            "data": result,
+            "message": "文件处理成功"
+        })
+        
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message": str(e)
+        }), 500
 
 # 转换docx到xmind接口
 @app.route('/api/convert', methods=['POST'])
