@@ -486,7 +486,6 @@ export default {
 
     // 文件上传相关
     const beforeUpload = (file) => {
-      addLog(`文件: ${file.name} 上传成功`, 'info')
       const isDocx = file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
       if (!isDocx) {
         addLog(`文件类型错误: ${file.name} 不是docx文件`, 'error')
@@ -729,7 +728,7 @@ export default {
 
     // 生命周期钩子
     onMounted(() => {
-      loadConfigs()
+      // loadConfigs()
     })
 
     // 添加handleReadDocument方法

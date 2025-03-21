@@ -70,7 +70,6 @@ def first_ali_file_agent_handle(user_id):
         temperature=0.9
     )
     full_content = ""
-    print("文件处理的流式输出内容为：")
     for chunk in file_completion:
         if chunk.choices and chunk.choices[0].delta.content:
             full_content += chunk.choices[0].delta.content
